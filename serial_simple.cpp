@@ -152,7 +152,7 @@ int main(int argc, char* argv[]){
     int depth = 3;
     double iteration = ((pow(8,depth)-1)/7)-1;
 
-    cout << "starting BFS" << endl;
+    //cout << "starting BFS" << endl;
 
     clock_t begin = clock();
     for(int i = 0; i < iteration; i++){
@@ -164,7 +164,7 @@ int main(int argc, char* argv[]){
     cout << "BFS finished with " << space.size() << " states generated" << endl;
 
     iteration = ((pow(8,upperLimit)-depth)/7)-1;
-    unsigned long best = upperLimit;
+    unsigned long best = upperLimit+1;
     cout << "starting DFS" << endl;
     while(!space.empty()){
         tmp = space.back();
