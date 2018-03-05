@@ -142,7 +142,9 @@ int main(int argc, char* argv[]){
     //visited.insert(make_representation(play));
     space.push_back(play);
 
-    playarea tmp = space.front();
+    playarea tmp;
+
+    tmp = space.front();
     getMoves(tmp, peons, space, p, upperLimit, K, visited);
 
     space.pop_front();
