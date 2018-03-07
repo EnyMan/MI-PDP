@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <set>
 
+#define __memory
+
 using namespace std;
 
 typedef pair<vector<bool>, vector<pair<int, int> > > playarea;
@@ -32,46 +34,52 @@ string make_representation(const playarea &from){
 }
 
 void moveHorse(vector<pair<int, playarea> > &next_boards, const playarea &old, const vector<pair<int, int> > &peons, const int x, const int y, const int p, const unsigned int upperLimit, const int size, set<string>& visited){
+    auto old_second_back = old.second.back();
     if(old.second.size()+1 > upperLimit){
         //cout << "   reached limit" << endl;
         return;
     }
-    if(old.second.back().first+x < 0 || old.second.back().first+x >= size){
+    if(old_second_back.first+x < 0 || old_second_back.first+x >= size){
         //cout << "    move out of board" << endl;
         return;
     }
-    if(old.second.back().second+y < 0 || old.second.back().second+y >= size){
+    if(old_second_back.second+y < 0 || old_second_back.second+y >= size){
         //cout << "    move out of board" << endl;
+        return;
+    }
+
+    int count = 0;
+    for (auto &&it : old.first) {
+        if(it)count++;
+    }
+    auto found = find(peons.begin(), peons.end(),make_pair(old_second_back.first+x,old_second_back.second+y));
+    if(found != peons.end())
+        count++;
+
+    if(old.second.size()+1 + (p-count) >= upperLimit){
+      //cout << "    move doesnt lead to solution" << endl;
         return;
     }
 
     playarea next = old;
     //cout << "    adding move " << old.second.back().first+x << " " << old.second.back().second+y;
-    next.second.emplace_back(old.second.back().first+x,old.second.back().second+y);
+    next.second.emplace_back(old_second_back.first+x,old_second_back.second+y);
+    auto next_second_back = next.second.back();
 
     int best_distance = INT32_MAX;
     for (const auto &peon : peons) {
-        int distance = abs(peon.first - next.second.back().first) + abs(peon.second - next.second.back().second);
-        if(distance < best_distance) best_distance = distance;
+        int distance = abs(peon.first - next_second_back.first) + abs(peon.second - next_second_back.second);
+        if(distance > 0 && distance < best_distance) best_distance = distance;
     }
 
     //cout << " peons: ";
     int taken = 0;
     for(unsigned int i = 0; i < peons.size(); ++i ){
-        if(peons[i].first == next.second.back().first && peons[i].second == next.second.back().second){
+        if(peons[i].first == next_second_back.first && peons[i].second == next_second_back.second){
             next.first[i] = true;
             taken = 1;
         }
         //cout << next.first[i];
-    }
-
-    int count = 0;
-    for (auto &&it : next.first) {
-        if(it)count++;
-    }
-    if(next.second.size() + (p-count) >= upperLimit){
-      //cout << "    move doesnt lead to solution" << endl;
-      return;
     }
 
     int fitness = 8*taken-best_distance;
@@ -95,7 +103,9 @@ int getMoves(const playarea &old, const vector<pair<int, int> > &peons, deque<pl
     moveHorse(next_boards, old, peons, 2,1, p, upperLimit, size, visited);
     sort(next_boards.begin(), next_boards.end(), board_fitness_compare);
     for (auto &next_board : next_boards) {
-      //visited.insert(make_representation(next_board.second));
+#ifdef _memory
+      visited.insert(make_representation(next_board.second));
+#endif
       space.push_back(next_board.second);
     }
     //cout << "  added: " << static_cast<int>(next_boards.size()) << " moves" << endl;
@@ -138,8 +148,9 @@ int main(int argc, char* argv[]){
 
     deque<playarea> space;
     set<string> visited;
-
-    //visited.insert(make_representation(play));
+#ifdef _memory
+    visited.insert(make_representation(play));
+#endif
     space.push_back(play);
 
     playarea tmp;
@@ -161,11 +172,11 @@ int main(int argc, char* argv[]){
         space.pop_front();
     }
 
-    cout << "BFS finished with " << space.size() << " states generated" << endl;
+    //cout << "BFS finished with " << space.size() << " states generated" << endl;
 
     iteration = ((pow(8,upperLimit)-depth)/7)-1;
     unsigned long best = upperLimit+1;
-    cout << "starting DFS" << endl;
+    //cout << "starting DFS" << endl;
     while(!space.empty()){
         tmp = space.back();
         space.pop_back();
@@ -183,16 +194,20 @@ int main(int argc, char* argv[]){
             best = tmp.second.size();
             cout << "  Found solution: " << tmp.second.size()-1 << " with moves: ";
             for (auto &it : tmp.second) {
+                auto found = find(peons.begin(), peons.end(), make_pair(it.first ,it.second));
+                if(found != peons.end()) cout << " *";
+                else cout << ' ';
                 cout << "(" << it.first << "," << it.second << ")";
             }
             cout << endl;
         }
     }
-    space.clear();
-    //visited.clear();
-    peons.clear();
     clock_t end = clock();
+    space.clear();
+    visited.clear();
+    peons.clear();
     double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    cout << "Best solution found with: " << best-1 << " moves" << endl << "Calculated in: " << elapsed_secs << "s" << endl;
+    //cout << "Best solution found with: " << best-1 << " moves" << endl;
+    cout << "Calculated in: " << elapsed_secs << "s" << endl;
     return 0;
 }
