@@ -8,6 +8,7 @@
 #include <set>
 
 #define __memory
+#define __print
 
 using namespace std;
 
@@ -177,6 +178,7 @@ int main(int argc, char* argv[]){
     iteration = ((pow(8,upperLimit)-depth)/7)-1;
     unsigned long best = upperLimit+1;
     //cout << "starting DFS" << endl;
+    string best_moves;
     while(!space.empty()){
         tmp = space.back();
         space.pop_back();
@@ -190,24 +192,32 @@ int main(int argc, char* argv[]){
         }
 
         if(trues == p && tmp.second.size() < best){
-
+            best_moves.clear();
             best = tmp.second.size();
-            cout << "  Found solution: " << tmp.second.size()-1 << " with moves: ";
             for (auto &it : tmp.second) {
                 auto found = find(peons.begin(), peons.end(), make_pair(it.first ,it.second));
-                if(found != peons.end()) cout << " *";
-                else cout << ' ';
-                cout << "(" << it.first << "," << it.second << ")";
+                if(it != *tmp.second.begin()) best_moves += ' ';
+                if(found != peons.end()) best_moves += "*";
+                best_moves += "(";
+                best_moves += to_string(it.first);
+                best_moves += ",";
+                best_moves += to_string(it.second);
+                best_moves += ")";
             }
-            cout << endl;
+          #ifdef _print
+          cout << "  Found solution: " << tmp.second.size()-1 << " with moves: " << best_moves;
+          #endif
         }
     }
     clock_t end = clock();
     space.clear();
     visited.clear();
     peons.clear();
+    cout << best_moves << endl;
     double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    //cout << "Best solution found with: " << best-1 << " moves" << endl;
+    #ifdef _print
+    cout << "Best solution found with: " << best-1 << " moves" << endl;
+    #endif
     cout << "Calculated in: " << elapsed_secs << "s" << endl;
     return 0;
 }
