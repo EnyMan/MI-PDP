@@ -17,7 +17,7 @@ typedef pair<vector<bool>, vector<pair<int, int> > > playarea;
 
 struct board_fitness_compare{
     bool operator()(const pair<int, playarea>& lhs, const pair<int, playarea>& rhs){
-      return lhs.first > rhs.first;
+        return lhs.first > rhs.first;
     }
 } board_fitness_compare;
 
@@ -32,15 +32,6 @@ string make_representation(const playarea &from){
         repre += to_string(i);
     }
     return repre;
-}
-
-
-void foo(){
-    for(int i=0; i < 10;i++)
-        //getnextitem()
-        #pragma omp task
-            foo();
-        #pragma omp task
 }
 
 
@@ -123,6 +114,43 @@ int getMoves(const playarea &old, const vector<pair<int, int> > &peons, deque<pl
     return static_cast<int>(next_boards.size() - 1);
 }
 
+string best_moves;
+unsigned int best;
+void foo(playarea state, const vector<pair<int, int> > &peons, const int p, int K, set<string>& visited){
+    int trues = 0;
+    for (auto &&it : state.first) {
+        if(it)trues++;
+    }
+
+    if(trues == p && state.second.size() < best){
+        best_moves.clear();
+        best = state.second.size();
+        for (auto &it : state.second) {
+            auto found = find(peons.begin(), peons.end(), make_pair(it.first ,it.second));
+            if(it != *state.second.begin()) best_moves += ' ';
+            if(found != peons.end()) best_moves += "*";
+            best_moves += "(";
+            best_moves += to_string(it.first);
+            best_moves += ",";
+            best_moves += to_string(it.second);
+            best_moves += ")";
+        }
+#ifdef _print
+        cout << "  Found solution: " << tmp.second.size()-1 << " with moves: " << best_moves;
+#endif
+    }
+
+    deque<playarea> space;
+    getMoves(state, peons, space, p, best, K, visited);
+
+    for (auto &it : space) {
+    #pragma omp task shared(peons, K, visited)
+        foo(it, peons, p, K, visited);
+    #pragma omp taskwait
+    }
+}
+
+
 int main(int argc, char* argv[]){
     if (argc < 2 || argc > 2) {
         cerr << "Usage:" << argv[0] << " FILE " << endl;
@@ -186,38 +214,17 @@ int main(int argc, char* argv[]){
     //cout << "BFS finished with " << space.size() << " states generated" << endl;
 
     iteration = ((pow(8,upperLimit)-depth)/7)-1;
-    unsigned long best = upperLimit+1;
+    best = upperLimit+1;
     //cout << "starting DFS" << endl;
     string best_moves;
-    while(!space.empty()){
-        tmp = space.back();
-        space.pop_back();
-        //cout << space.size() << ":" << tmp.second.size();
+    for(auto &it : space){
+    #pragma omp parallel
+    {
+        #pragma omp task shared(peons, p, K, visited)
+            foo(it, peons, p, K, visited);
+        #pragma omp taskwait
+    }
 
-        getMoves(tmp, peons, space, p, best, K, visited);
-
-        int trues = 0;
-        for (auto &&it : tmp.first) {
-          if(it)trues++;
-        }
-
-        if(trues == p && tmp.second.size() < best){
-            best_moves.clear();
-            best = tmp.second.size();
-            for (auto &it : tmp.second) {
-                auto found = find(peons.begin(), peons.end(), make_pair(it.first ,it.second));
-                if(it != *tmp.second.begin()) best_moves += ' ';
-                if(found != peons.end()) best_moves += "*";
-                best_moves += "(";
-                best_moves += to_string(it.first);
-                best_moves += ",";
-                best_moves += to_string(it.second);
-                best_moves += ")";
-            }
-          #ifdef _print
-          cout << "  Found solution: " << tmp.second.size()-1 << " with moves: " << best_moves;
-          #endif
-        }
     }
     clock_t end = clock();
     space.clear();
