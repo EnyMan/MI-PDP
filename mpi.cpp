@@ -4,8 +4,10 @@
 #include <vector>
 #include <cmath>
 #include <ctime>
+#include <sstream>
 #include <algorithm>
 #include <set>
+#include <unistd.h>
 #include <bitset>
 #include "mpi.h"
 
@@ -102,7 +104,7 @@ int getMoves(const playarea &old, const vector<pair<int, int> > &peons, deque<pl
 int main(int argc, char* argv[]){
 
     int my_rank;
-    int p;
+    int cpus;
 
     /* start up MPI */
     MPI_Init( &argc, &argv );
@@ -111,10 +113,9 @@ int main(int argc, char* argv[]){
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
     /* find out number of processes */
-    MPI_Comm_size(MPI_COMM_WORLD, &p);
+    MPI_Comm_size(MPI_COMM_WORLD, &cpus);
 
-    if (my_rank != 0) {
-
+    if (my_rank == 0) {
       if (argc < 2 || argc > 2) {
         cerr << "Usage:" << argv[0] << " FILE " << endl;
         return 1;
@@ -148,6 +149,18 @@ int main(int argc, char* argv[]){
         }
       }
 
+      string init_msg = to_string(K);
+      init_msg.append(":");
+      for(auto peon : peons){
+        init_msg.append(to_string(peon.first));
+        init_msg.append(",");
+        init_msg.append(to_string(peon.second));
+        init_msg.append(";");
+      }
+      for (int i = 1; i < cpus; i++) {
+        MPI_Send(init_msg.c_str(), init_msg.size(), MPI_CHAR, i, 3, MPI_COMM_WORLD);
+      }
+
       deque<playarea> space;
 
       space.push_back(play);
@@ -164,36 +177,41 @@ int main(int argc, char* argv[]){
 
 
       /* think of parallelling this */
-      while(space.size() < pow(8,p)){
+      while(space.size() < pow(8,cpus-1)){
       //for (int i = 0; i < iteration; i++) {
         tmp = space.front();
         getMoves(tmp, peons, space, p, upperLimit, K);
         space.pop_front();
       }
-
+      cout << "generated " << pow(8,cpus-1) << " states" << endl;
       string best_solution;
-
-      vector<bool> working;
-      working.reserve(p);
+      int best = upperLimit;
+      vector<bool> working(static_cast<unsigned long>(cpus-1), false);
       int flag;
       MPI_Status status;
       while(!space.empty()) {
-        for (int i = 0; i < p; i++) {
+        for (int i = 1; i < cpus; i++) {
           if(!working[i]) {
-            /*
-             * serialize state+best_solution
-             * (x,y)(x,y)(x,y)...:upper_limit
-             * send serialized state+best_solution
-             */
-            MPI_Send(MPI_COMM_WORLD);
+            tmp = space.back();
+            space.pop_back();
+            string state_msg = to_string(best);
+            state_msg.append(":");
+            for(auto move : tmp.second){
+              state_msg.append(to_string(move.first));
+              state_msg.append(",");
+              state_msg.append(to_string(move.second));
+              state_msg.append(";");
+            }
+            MPI_Send(state_msg.c_str(), state_msg.size(), MPI_CHAR, i, 0, MPI_COMM_WORLD);
+            working[i] = true;
           } else {
             /* when not sending tasks receive best_solution s from slaves */
-            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+            MPI_Iprobe(MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &flag, &status);
             if (flag) {
               int msg_size;
               MPI_Get_count(&status, MPI_CHAR, &msg_size);
               char *message = new char[msg_size+1];
-              MPI_Recv(&message, msg_size, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+              MPI_Recv(message, msg_size, MPI_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
               working[status.MPI_SOURCE] = false;
               cout << message << endl;
             }
@@ -201,10 +219,10 @@ int main(int argc, char* argv[]){
         }
       }
 
-      for (int i = 0; i < p; i++) {
-        /* send END msg */
+      for (int i = 1; i < p; i++) {
+        MPI_Send("END", 3, MPI_CHAR, i, 0, MPI_COMM_WORLD);
       }
-      for (int i = 0; i < p; i++) {
+      for (int i = 1; i < p; i++) {
         /* receive last best_solutions */
       }
       cout << best_solution << endl;
@@ -212,22 +230,93 @@ int main(int argc, char* argv[]){
       /* == SLAVES == */
       bool work = true;
       int flag;
+      int msg_size;
       MPI_Status status;
-      while(work){
-        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
-        int msg_size;
-        MPI_Get_count(&status, MPI_CHAR, &msg_size);
-        auto *message = new char[msg_size+1];
-        MPI_Recv(&message, msg_size, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-        if(message == "END"){
-          work = false;
+
+      MPI_Probe(MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
+      MPI_Get_count(&status, MPI_CHAR, &msg_size);
+
+      auto message = new char[msg_size+1];
+      MPI_Recv(message, msg_size, MPI_CHAR, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
+      message[msg_size] = '\0';
+      string str(message);
+
+      int K;
+      vector<pair<int, int> > peons;
+      bool split = false;
+      string str_tmp;
+      pair<int, int> pair_tmp;
+      for(char c : str){
+        if(!split){
+          if(c == ':'){
+            split = true;
+            K = stoi(str_tmp);
+            str_tmp.clear();
+          } else {
+            str_tmp.push_back(c);
+          }
         } else {
+          if(c == ';'){
+            pair_tmp.second = stoi(str_tmp);
+            str_tmp.clear();
+            peons.push_back(pair_tmp);
+          }else if(c == ','){
+            pair_tmp.first = stoi(str_tmp);
+            str_tmp.clear();
+          } else{
+            str_tmp.push_back(c);
+          }
+        }
+      }
+      free(message);
+      while(work){
+        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        msg_size;
+        MPI_Get_count(&status, MPI_CHAR, &msg_size);
+        message = new char[msg_size+1];
+        MPI_Recv(message, msg_size, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        message[msg_size] = '\0';
+        string msg_str(message);
+        cout << msg_str << endl;
+        if(msg_str == "END"){
+          work = false;
+          /**/
+        } else {
+          int best;
+          playarea state;
+          split = false;
+          str_tmp.clear();
+          for(char c : msg_str){
+            if(!split){
+              if(c == ':'){
+                split = true;
+                best = stoi(str_tmp);
+                str_tmp.clear();
+              } else {
+                str_tmp.push_back(c);
+              }
+            } else {
+              if(c == ';'){
+                pair_tmp.second = stoi(str_tmp);
+                auto is_peon = find(peons.begin(),peons.end(),pair_tmp);
+
+                state.first.push_back(!(is_peon == peons.end()));
+                state.second.push_back(pair_tmp);
+                str_tmp.clear();
+              }else if(c == ','){
+                pair_tmp.first = stoi(str_tmp);
+                str_tmp.clear();
+              } else{
+                str_tmp.push_back(c);
+              }
+            }
+          }
           /* DO THE ACTUAL DFS TASK IN PARALLEL */
         }
       }
 
 
-      int iteration = ((pow(8, upperLimit) - depth) / 7) - 1;
+      /*int iteration = ((pow(8, upperLimit) - depth) / 7) - 1;
       unsigned long best = upperLimit + 1;
       string best_moves;
       while (!space.empty()) {
@@ -255,7 +344,7 @@ int main(int argc, char* argv[]){
             best_moves += ")";
           }
         }
-      }
+      }*/
     }
     MPI_Finalize();
     return 0;
