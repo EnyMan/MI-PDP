@@ -4,11 +4,7 @@
 #include <vector>
 #include <cmath>
 #include <ctime>
-#include <sstream>
 #include <algorithm>
-#include <set>
-#include <unistd.h>
-#include <bitset>
 #include "mpi.h"
 
 using namespace std;
@@ -35,7 +31,7 @@ string make_representation(const playarea &from){
     return repre;
 }
 
-void moveHorse(vector<pair<int, playarea> > &next_boards, const playarea &old, const vector<pair<int, int> > &peons, const int x, const int y, const int p, const unsigned int upperLimit, const int size){
+void moveHorse(vector<pair<int, playarea> > &next_boards, const playarea &old, const vector<pair<int, int> > &peons, const int x, const int y, const unsigned long upperLimit, const int size){
     auto old_second_back = old.second.back();
     if(old.second.size()+1 > upperLimit){
         return;
@@ -51,11 +47,11 @@ void moveHorse(vector<pair<int, playarea> > &next_boards, const playarea &old, c
     for (auto &&it : old.first) {
         if(it)count++;
     }
-    auto found = find(peons.begin(), peons.end(),make_pair(old_second_back.first+x,old_second_back.second+y));
+    auto found = find(peons.begin(), peons.end(), make_pair(old_second_back.first+x,old_second_back.second+y));
     if(found != peons.end())
         count++;
 
-    if(old.second.size()+1 + (p-count) >= upperLimit){
+    if(old.second.size()+1 + (peons.size()-count) >= upperLimit){
         return;
     }
 
@@ -81,19 +77,19 @@ void moveHorse(vector<pair<int, playarea> > &next_boards, const playarea &old, c
     next_boards.emplace_back(fitness, next);
 }
 
-int getMoves(const playarea &old, const vector<pair<int, int> > &peons, deque<playarea> &space, const int p, const unsigned int upperLimit, int size){
+int getMoves(const playarea &old, const vector<pair<int, int> > &peons, deque<playarea> &space, const unsigned long upperLimit, int size){
     vector<pair<int, playarea> > next_boards;
-    moveHorse(next_boards, old, peons, 2, -1, p, upperLimit, size);
-    moveHorse(next_boards, old, peons, 1, -2, p, upperLimit, size);
+    moveHorse(next_boards, old, peons, 2, -1, upperLimit, size);
+    moveHorse(next_boards, old, peons, 1, -2, upperLimit, size);
 
-    moveHorse(next_boards, old, peons, -1,-2, p, upperLimit, size);
-    moveHorse(next_boards, old, peons, -2,-1, p, upperLimit, size);
+    moveHorse(next_boards, old, peons, -1,-2, upperLimit, size);
+    moveHorse(next_boards, old, peons, -2,-1, upperLimit, size);
 
-    moveHorse(next_boards, old, peons, -2,1, p, upperLimit, size);
-    moveHorse(next_boards, old, peons, -1,2, p, upperLimit, size);
+    moveHorse(next_boards, old, peons, -2,1, upperLimit, size);
+    moveHorse(next_boards, old, peons, -1,2, upperLimit, size);
 
-    moveHorse(next_boards, old, peons, 1,2, p, upperLimit, size);
-    moveHorse(next_boards, old, peons, 2,1, p, upperLimit, size);
+    moveHorse(next_boards, old, peons, 1,2, upperLimit, size);
+    moveHorse(next_boards, old, peons, 2,1, upperLimit, size);
     sort(next_boards.begin(), next_boards.end(), board_fitness_compare);
     for (auto &next_board : next_boards) {
       space.push_back(next_board.second);
@@ -104,7 +100,7 @@ int getMoves(const playarea &old, const vector<pair<int, int> > &peons, deque<pl
 int main(int argc, char* argv[]){
 
     int my_rank;
-    int cpus;
+    int tmp_cpus;
 
     /* start up MPI */
     MPI_Init( &argc, &argv );
@@ -113,7 +109,8 @@ int main(int argc, char* argv[]){
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
     /* find out number of processes */
-    MPI_Comm_size(MPI_COMM_WORLD, &cpus);
+    MPI_Comm_size(MPI_COMM_WORLD, &tmp_cpus);
+    auto cpus = static_cast<unsigned long>(tmp_cpus);
 
     if (my_rank == 0) {
       if (argc < 2 || argc > 2) {
@@ -132,7 +129,6 @@ int main(int argc, char* argv[]){
 
       playarea play;
 
-      int p = 0;
 
       for (int row = 0; row < K; row++) {
         for (int col = 0; col < K; col++) {
@@ -144,7 +140,6 @@ int main(int argc, char* argv[]){
           if (c == '1') {
             peons.emplace_back(row, col);
             play.first.push_back(false);
-            p++;
           };
         }
       }
@@ -168,7 +163,7 @@ int main(int argc, char* argv[]){
       playarea tmp;
 
       tmp = space.front();
-      getMoves(tmp, peons, space, p, upperLimit, K);
+      getMoves(tmp, peons, space, upperLimit, K);
 
       space.pop_front();
 
@@ -180,15 +175,14 @@ int main(int argc, char* argv[]){
       while(space.size() < pow(8,cpus-1)){
       //for (int i = 0; i < iteration; i++) {
         tmp = space.front();
-        getMoves(tmp, peons, space, p, upperLimit, K);
         space.pop_front();
+        getMoves(tmp, peons, space, upperLimit, K);
       }
       cout << "generated " << pow(8,cpus-1) << " states" << endl;
       string best_solution;
-      int best = upperLimit;
-      vector<bool> working(static_cast<unsigned long>(cpus-1), false);
+      int best = upperLimit+1;
+      vector<bool> working(cpus-1, false);
       int flag;
-      MPI_Status status;
       while(!space.empty()) {
         for (int i = 1; i < cpus; i++) {
           if(!working[i]) {
@@ -206,24 +200,60 @@ int main(int argc, char* argv[]){
             working[i] = true;
           } else {
             /* when not sending tasks receive best_solution s from slaves */
+            MPI_Status status;
             MPI_Iprobe(MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &flag, &status);
             if (flag) {
               int msg_size;
               MPI_Get_count(&status, MPI_CHAR, &msg_size);
-              char *message = new char[msg_size+1];
-              MPI_Recv(message, msg_size, MPI_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
+              char *message = new char[2*msg_size];
+              MPI_Recv(message, 2*msg_size, MPI_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
+              message[msg_size] = '\0';
               working[status.MPI_SOURCE] = false;
-              cout << message << endl;
+              string solution(message);
+              int local_best = stoi(solution.substr(0,solution.find(':')));
+              if(local_best < best){
+                best = local_best+1;
+                best_solution = solution.substr(solution.find(':')+1);
+              }
+              delete[] message;
+            }
+            MPI_Iprobe(MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &flag, &status);
+            if (flag) {
+              char *message = new char[10];
+              MPI_Recv(message, 10, MPI_CHAR, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
+              working[status.MPI_SOURCE] = false;
+              delete[] message;
             }
           }
         }
       }
 
-      for (int i = 1; i < p; i++) {
+      for (int i = 1; i < cpus; i++) {
         MPI_Send("END", 3, MPI_CHAR, i, 0, MPI_COMM_WORLD);
       }
-      for (int i = 1; i < p; i++) {
-        /* receive last best_solutions */
+      for (int i = 1; i < cpus; i++) {
+        /* when not sending tasks receive best_solution s from slaves */
+        MPI_Status status;
+        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        int msg_size;
+        MPI_Get_count(&status, MPI_CHAR, &msg_size);
+        if(msg_size > 3){
+          auto message = new char[2*msg_size];
+          MPI_Recv(message, 2*msg_size, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+          message[msg_size] = '\0';
+          string solution(message);
+          int local_best = stoi(solution.substr(0,solution.find(':')));
+          if(local_best < best){
+            best_solution = solution.substr(solution.find(':')+1);
+          }
+          delete[] message;
+        } else {
+          auto message = new char[10];
+          MPI_Recv(message, 10, MPI_CHAR, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
+          working[status.MPI_SOURCE] = false;
+          delete[] message;
+        }
+
       }
       cout << best_solution << endl;
     } else {
@@ -237,10 +267,10 @@ int main(int argc, char* argv[]){
       MPI_Get_count(&status, MPI_CHAR, &msg_size);
 
       auto message = new char[msg_size+1];
-      MPI_Recv(message, msg_size, MPI_CHAR, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
+      MPI_Recv(message, msg_size+1, MPI_CHAR, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
       message[msg_size] = '\0';
       string str(message);
-
+      //cout << "slave init " << str << endl;
       int K;
       vector<pair<int, int> > peons;
       bool split = false;
@@ -268,21 +298,21 @@ int main(int argc, char* argv[]){
           }
         }
       }
-      free(message);
+      delete[] message;
       while(work){
         MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         msg_size;
         MPI_Get_count(&status, MPI_CHAR, &msg_size);
         message = new char[msg_size+1];
-        MPI_Recv(message, msg_size, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        MPI_Recv(message, msg_size+1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         message[msg_size] = '\0';
         string msg_str(message);
-        cout << msg_str << endl;
+        //cout << my_rank << ":" << msg_str << endl;
         if(msg_str == "END"){
           work = false;
           /**/
         } else {
-          int best;
+          unsigned long best;
           playarea state;
           split = false;
           str_tmp.clear();
@@ -290,7 +320,7 @@ int main(int argc, char* argv[]){
             if(!split){
               if(c == ':'){
                 split = true;
-                best = stoi(str_tmp);
+                best = stoul(str_tmp);
                 str_tmp.clear();
               } else {
                 str_tmp.push_back(c);
@@ -298,9 +328,6 @@ int main(int argc, char* argv[]){
             } else {
               if(c == ';'){
                 pair_tmp.second = stoi(str_tmp);
-                auto is_peon = find(peons.begin(),peons.end(),pair_tmp);
-
-                state.first.push_back(!(is_peon == peons.end()));
                 state.second.push_back(pair_tmp);
                 str_tmp.clear();
               }else if(c == ','){
@@ -311,40 +338,74 @@ int main(int argc, char* argv[]){
               }
             }
           }
+          for(auto peon : peons){
+            auto found_in_path = find(state.second.begin(), state.second.end(), peon);
+            state.first.push_back(!(found_in_path == state.second.end()));
+          }
+
+          delete[] message;
+
+          /* GENERATE NEW SPACE FOR THIS CPU */
+          deque<playarea> space;
+
+          space.push_back(state);
+
+          playarea tmp;
+
+          tmp = space.front();
+          getMoves(tmp, peons, space, best, K);
+
+          space.pop_front();
+
+          /* think of parallelling this */
+          while(!space.empty() && space.size() < pow(8,2)){
+            tmp = space.front();
+            space.pop_front();
+            getMoves(tmp, peons, space, best, K);
+          }
+          //cout << my_rank << " generated " << space.size() << endl;
+
           /* DO THE ACTUAL DFS TASK IN PARALLEL */
-        }
-      }
+          //cout << best << ":" << peons.size() << endl;
+          string best_moves;
+          while (!space.empty()) {
+            tmp = space.back();
+            space.pop_back();
 
+            getMoves(tmp, peons, space, best, K);
 
-      /*int iteration = ((pow(8, upperLimit) - depth) / 7) - 1;
-      unsigned long best = upperLimit + 1;
-      string best_moves;
-      while (!space.empty()) {
-        tmp = space.back();
-        space.pop_back();
-
-        getMoves(tmp, peons, space, p, best, K);
-
-        int trues = 0;
-        for (auto &&it : tmp.first) {
-          if (it)trues++;
-        }
-
-        if (trues == p && tmp.second.size() < best) {
-          best_moves.clear();
-          best = tmp.second.size();
-          for (auto &it : tmp.second) {
-            auto found = find(peons.begin(), peons.end(), make_pair(it.first, it.second));
-            if (it != *tmp.second.begin()) best_moves += ' ';
-            if (found != peons.end()) best_moves += "*";
-            best_moves += "(";
-            best_moves += to_string(it.first);
-            best_moves += ",";
-            best_moves += to_string(it.second);
-            best_moves += ")";
+            int trues = 0;
+            for (auto &&it : tmp.first) {
+              if (it)trues++;
+            }
+            if (trues == peons.size() && tmp.second.size() < best) {
+              //cout << my_rank << " Found better move " << tmp.second.size() <<  endl;
+              best_moves.clear();
+              best = tmp.second.size();
+              best_moves += to_string(best);
+              best_moves += ':';
+              for (auto &it : tmp.second) {
+                auto found = find(peons.begin(), peons.end(), make_pair(it.first, it.second));
+                if (it != *tmp.second.begin()) best_moves += ' ';
+                if (found != peons.end()) best_moves += "*";
+                best_moves += "(";
+                best_moves += to_string(it.first);
+                best_moves += ",";
+                best_moves += to_string(it.second);
+                best_moves += ")";
+              }
+              //cout << best_moves << endl;
+            }
+          }
+          if(best_moves.empty()) {
+            //cout << my_rank << " didn't found anything" << endl;
+            MPI_Send("END", 3, MPI_CHAR, 0, 1, MPI_COMM_WORLD);
+          } else {
+            //cout << my_rank << " sending " << best_moves << endl;
+            MPI_Send(best_moves.c_str(), best_moves.size(), MPI_CHAR, 0, 2, MPI_COMM_WORLD);
           }
         }
-      }*/
+      }
     }
     MPI_Finalize();
     return 0;

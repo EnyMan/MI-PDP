@@ -14,7 +14,7 @@ parallel: serial_simple.cpp
 	$(CXX) -fopenmp -O3 serial_simple.cpp -o parallel
 
 mpi: mpi.cpp
-	$(MXX) -fopenmp -g mpi.cpp -o mpi
+	$(MXX) -fopenmp -O3 mpi.cpp -o mpi
 
 
 clean:
