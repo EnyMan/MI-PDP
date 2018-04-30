@@ -6,6 +6,7 @@
 #include <ctime>
 #include <algorithm>
 #include "mpi.h"
+#include <omp.h>
 
 using namespace std;
 
@@ -52,6 +53,11 @@ void moveHorse(vector<pair<int, playarea> > &next_boards, const playarea &old, c
         count++;
 
     if(old.second.size()+1 + (peons.size()-count) >= upperLimit){
+        return;
+    }
+    if(old.second.size() >= 5){
+      auto old_second_previous = old.second.at(old.second.size() - 4);
+      if (old_second_previous.first == old_second_back.first + x && old_second_previous.second == old_second_back.second + y)
         return;
     }
 
@@ -155,7 +161,7 @@ int main(int argc, char* argv[]){
       for (int i = 1; i < cpus; i++) {
         MPI_Send(init_msg.c_str(), init_msg.size(), MPI_CHAR, i, 3, MPI_COMM_WORLD);
       }
-
+      auto start = clock();
       deque<playarea> space;
 
       space.push_back(play);
@@ -172,13 +178,13 @@ int main(int argc, char* argv[]){
 
 
       /* think of parallelling this */
-      while(space.size() < pow(8,cpus-1)){
+      while(space.size() < (cpus-1)*8*10){
       //for (int i = 0; i < iteration; i++) {
         tmp = space.front();
         space.pop_front();
         getMoves(tmp, peons, space, upperLimit, K);
       }
-      cout << "generated " << pow(8,cpus-1) << " states" << endl;
+      //cout << "generated " << space.size() << " states" << endl;
       string best_solution;
       int best = upperLimit+1;
       vector<bool> working(cpus-1, false);
@@ -255,6 +261,8 @@ int main(int argc, char* argv[]){
         }
 
       }
+      clock_t end = clock();
+      cout << "Computed in " << double(end - start) / CLOCKS_PER_SEC << endl;
       cout << best_solution << endl;
     } else {
       /* == SLAVES == */
@@ -333,7 +341,7 @@ int main(int argc, char* argv[]){
               }else if(c == ','){
                 pair_tmp.first = stoi(str_tmp);
                 str_tmp.clear();
-              } else{
+              } else {
                 str_tmp.push_back(c);
               }
             }
@@ -358,7 +366,7 @@ int main(int argc, char* argv[]){
           space.pop_front();
 
           /* think of parallelling this */
-          while(!space.empty() && space.size() < pow(8,2)){
+          while(!space.empty() && space.size() < omp_get_num_threads()*8*6){
             tmp = space.front();
             space.pop_front();
             getMoves(tmp, peons, space, best, K);
@@ -368,33 +376,41 @@ int main(int argc, char* argv[]){
           /* DO THE ACTUAL DFS TASK IN PARALLEL */
           //cout << best << ":" << peons.size() << endl;
           string best_moves;
-          while (!space.empty()) {
-            tmp = space.back();
-            space.pop_back();
+          #pragma omp parallel for shared(best_moves, best)
+          for(int i = 0; i < space.size(); i++){
+            playarea bfs_tmp = space[i];
 
-            getMoves(tmp, peons, space, best, K);
+            deque<playarea> local_space;
+            local_space.push_back(bfs_tmp);
+            while(!local_space.empty()){
+              playarea dfs_tmp = local_space.back();
+              local_space.pop_back();
 
-            int trues = 0;
-            for (auto &&it : tmp.first) {
-              if (it)trues++;
-            }
-            if (trues == peons.size() && tmp.second.size() < best) {
-              //cout << my_rank << " Found better move " << tmp.second.size() <<  endl;
-              best_moves.clear();
-              best = tmp.second.size();
-              best_moves += to_string(best);
-              best_moves += ':';
-              for (auto &it : tmp.second) {
-                auto found = find(peons.begin(), peons.end(), make_pair(it.first, it.second));
-                if (it != *tmp.second.begin()) best_moves += ' ';
-                if (found != peons.end()) best_moves += "*";
-                best_moves += "(";
-                best_moves += to_string(it.first);
-                best_moves += ",";
-                best_moves += to_string(it.second);
-                best_moves += ")";
+              getMoves(dfs_tmp, peons, local_space, best, K);
+
+              int trues = 0;
+              for (auto &&it : dfs_tmp.first) {
+                if (it)trues++;
               }
-              //cout << best_moves << endl;
+              #pragma omp critical
+              if (trues == peons.size() && dfs_tmp.second.size() < best) {
+                //cout << my_rank << " Found better move " << dfs_tmp.second.size() <<  endl;
+                best_moves.clear();
+                best = dfs_tmp.second.size();
+                best_moves += to_string(best);
+                best_moves += ':';
+                for (auto &it : dfs_tmp.second) {
+                  auto found = find(peons.begin(), peons.end(), make_pair(it.first, it.second));
+                  if (it != *dfs_tmp.second.begin()) best_moves += ' ';
+                  if (found != peons.end()) best_moves += "*";
+                  best_moves += "(";
+                  best_moves += to_string(it.first);
+                  best_moves += ",";
+                  best_moves += to_string(it.second);
+                  best_moves += ")";
+                }
+                //cout << my_rank << ":" << best_moves << endl;
+              }
             }
           }
           if(best_moves.empty()) {
